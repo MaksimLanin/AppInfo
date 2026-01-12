@@ -54,13 +54,13 @@ fun AppListScreen(navController: NavController, viewModel: AppListViewModel = vi
             )
         }
     ) { paddingValues ->
-        Box( // <-- Оборачиваем в Box для позиционирования индикатора
+        Box(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
         ) {
             if (apps.isEmpty()) {
-                // Показываем индикатор, если список пуст
+
                 CircularProgressIndicator(
                     modifier = Modifier.align(Alignment.Center)
                 )
