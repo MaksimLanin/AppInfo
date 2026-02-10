@@ -40,7 +40,7 @@ import androidx.navigation.NavController
 import coil.compose.AsyncImage
 import com.example.appinfo.model.InstalledApp
 import com.example.appinfo.viewmodel.AppListViewModel
-import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.filter
 
 
 private const val TAG = "AppDetailScreen"
@@ -54,38 +54,36 @@ fun AppDetailScreen(
 ) {
     val context = LocalContext.current
     var app by remember { mutableStateOf<InstalledApp?>(null) }
-    var isLoadingChecksum by remember { mutableStateOf(false) }
+    var isLoadingChecksum by remember { mutableStateOf(false) } // <-- Состояние загрузки в UI
     var hasAttemptedCalculation by remember { mutableStateOf(false) }
 
     LaunchedEffect(packageName) {
-        Log.d(TAG, "LaunchedEffect started for packageName: $packageName")
+        Log.d(TAG, "LaunchedEffect: Запущен для packageName: $packageName")
 
-        viewModel.appList.collectLatest { list ->
-            Log.d(TAG, "Received updated app list, searching for: $packageName")
-            val updatedApp = list.find { it.packageName == packageName }
+        viewModel.appMap.filter { it.containsKey(packageName) }.collect { map ->
+            val updatedApp = map[packageName]
             if (updatedApp != null) {
-                Log.d(TAG, "Found updated app: $updatedApp")
+                Log.d(TAG, "AppDetailScreen: Найдено обновлённое приложение: $updatedApp")
                 app = updatedApp
 
-                if (updatedApp.apkCheckSum == null && !hasAttemptedCalculation) {
-                    Log.d(
-                        TAG,
-                        "Checksum is null and not yet calculated, initiating calculation for: $packageName"
-                    )
-                    isLoadingChecksum = true
+                // Проверяем, нужно ли запустить вычисление
+                if (updatedApp.apkCheckSum == null && !hasAttemptedCalculation && !isLoadingChecksum) {
+                    Log.d(TAG, "AppDetailScreen: Чексумма null и не вычислялась, инициируем вычисление для: $packageName")
+                    isLoadingChecksum = true // <-- Устанавливаем флаг загрузки в UI
                     hasAttemptedCalculation = true
                     viewModel.updateApkChecksum(packageName)
                 } else if (updatedApp.apkCheckSum != null) {
-                    Log.d(TAG, "Checksum is now available: ${updatedApp.apkCheckSum}")
-                    isLoadingChecksum = false
+                    Log.d(TAG, "AppDetailScreen: Чексумма теперь доступна: ${updatedApp.apkCheckSum}")
+                    isLoadingChecksum = false // <-- Сбрасываем флаг загрузки в UI
                 } else {
-                    Log.d(
-                        TAG,
-                        "Checksum is still null, but calculation attempt was made or is pending."
-                    )
+                    Log.d(TAG, "AppDetailScreen: Чексумма всё ещё null, но вычисление было начато или ожидается.")
+                    // isLoadingChecksum остаётся true, пока не придет обновление с результатом
+                    if (updatedApp.apkCheckSum != null) {
+                        isLoadingChecksum = false
+                    }
                 }
             } else {
-                Log.d(TAG, "Updated app with packageName $packageName not found in list.")
+                Log.d(TAG, "AppDetailScreen: Обновлённое приложение с packageName $packageName не найдено в карте.")
                 if (app != null) {
                     app = null
                 }
@@ -128,14 +126,9 @@ fun AppDetailScreen(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                Text(
-                    text = "Версия: ${app.versionName}",
-                    style = MaterialTheme.typography.bodyMedium
-                )
-                Text(
-                    text = "Пакет: ${app.packageName}",
-                    style = MaterialTheme.typography.bodyMedium
-                )
+                Text(text = "Название: ${app.appName}", style = MaterialTheme.typography.headlineSmall)
+                Text(text = "Версия: ${app.versionName}", style = MaterialTheme.typography.bodyMedium)
+                Text(text = "Пакет: ${app.packageName}", style = MaterialTheme.typography.bodyMedium)
 
                 val checksumText = when {
                     isLoadingChecksum -> "SHA-256: Calculating..."
@@ -144,7 +137,6 @@ fun AppDetailScreen(
                 }
                 Text(text = checksumText, style = MaterialTheme.typography.bodySmall)
 
-                //  индикатор загрузки SHA
                 if (isLoadingChecksum) {
                     LinearProgressIndicator(
                         modifier = Modifier.fillMaxWidth()
@@ -172,7 +164,9 @@ private fun launchApp(context: Context, packageName: String) {
         try {
             context.startActivity(launchIntent)
         } catch (e: ActivityNotFoundException) {
-
+            Log.w(TAG, "launchApp: ActivityNotFoundException при запуске $packageName", e)
         }
+    } else {
+        Log.w(TAG, "launchApp: Launch intent для $packageName равен null.")
     }
 }
