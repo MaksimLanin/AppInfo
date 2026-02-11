@@ -9,84 +9,65 @@ import com.example.appinfo.model.InstalledApp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import java.util.concurrent.atomic.AtomicBoolean
+
 
 private const val TAG = "AppListViewModel"
 
 class AppListViewModel(application: Application) : AndroidViewModel(application) {
 
-    private val _appMap = MutableStateFlow<Map<String, InstalledApp>>(emptyMap())
-    val appMap: StateFlow<Map<String, InstalledApp>> = _appMap.asStateFlow()
-
-    // AtomicBoolean для потокобезопасной проверки, была ли загрузка начата
-    private val isLoadStarted = AtomicBoolean(false)
-
-    // StateFlow для списка приложений
-    val appList: StateFlow<List<InstalledApp>> = _appMap
-        .map { it.values.toList() }
-        .stateIn(
-            scope = viewModelScope,
-            started = kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5000),
-            initialValue = emptyList()
-        )
+    private val _appListResult = MutableStateFlow<AppRepository.Result<List<InstalledApp>>>(AppRepository.Result.Loading())
+    val appListResult: StateFlow<AppRepository.Result<List<InstalledApp>>> = _appListResult
 
     private val context = application.applicationContext
 
     init {
-        startLoadingAppMetas()
+        loadAppMetas()
     }
 
-    private fun startLoadingAppMetas() {
-        if (isLoadStarted.compareAndSet(false, true)) {
-            Log.d(TAG, "startLoadingAppMetas: Загрузка начата.")
-            viewModelScope.launch(Dispatchers.Default) {
-                Log.d(TAG, "startLoadingAppMetas: Начинаем загрузку метаданных приложений...")
-                val apps = AppRepository.getInstalledAppMetas(context)
-                val appMap = apps.associateBy { it.packageName }
-                Log.d(TAG, "startLoadingAppMetas: Загружено ${apps.size} метаданных приложений.")
-                _appMap.value = appMap
-                Log.d(TAG, "startLoadingAppMetas: Загрузка завершена, данные обновлены в состоянии.")
-            }
-        } else {
-            Log.d(TAG, "startLoadingAppMetas: Загрузка уже была начата, пропускаем.")
+    private fun loadAppMetas() {
+        viewModelScope.launch(Dispatchers.Default) {
+            Log.d(TAG, "Starting to load app metadata...")
+            val result = AppRepository.getInstalledAppMetas(context)
+            _appListResult.value = result
+            Log.d(TAG, "Loaded app metadata result: $result")
         }
     }
-
 
     fun updateApkChecksum(packageName: String) {
-        // Проверка происходит в AppDetailScreen, чтобы избежать дубликатов
-        Log.d(TAG, "updateApkChecksum: Вызван для $packageName")
+        Log.d(TAG, "updateApkChecksum called for: $packageName")
         viewModelScope.launch(Dispatchers.Default) {
-            // Проверяем состояние *сразу* в корутине, на случай, если данные изменились между проверкой в UI и запуском
-            val currentApp = _appMap.value[packageName]
-            if (currentApp?.apkCheckSum != null) {
-                Log.d(TAG, "updateApkChecksum: Чексумма для $packageName уже существует, пропускаем вычисление.")
-                return@launch
-            }
-
-            Log.d(TAG, "updateApkChecksum: Начинаем вычисление чексуммы для: $packageName")
-            val checksum = AppRepository.calculateApkChecksum(context, packageName)
-            Log.d(TAG, "updateApkChecksum: Вычисление чексуммы завершено для: $packageName, результат: $checksum")
-            if (checksum != null) {
-                val currentMap = _appMap.value
-                val existingApp = currentMap[packageName]
-                if (existingApp != null) {
-                    val updatedApp = existingApp.copy(apkCheckSum = checksum)
-                    val newMap = currentMap.toMutableMap().apply {
-                        this[packageName] = updatedApp
+            Log.d(TAG, "Starting checksum calculation for: $packageName")
+            val result = AppRepository.calculateApkChecksum(context, packageName)
+            Log.d(TAG, "Checksum calculation finished for: $packageName, result: $result")
+            if (result is AppRepository.Result.Success) {
+                val checksum = result.data
+                val currentListResult = _appListResult.value
+                if (currentListResult is AppRepository.Result.Success) {
+                    val updatedList = currentListResult.data.map { app ->
+                        if (app.packageName == packageName) {
+                            Log.d(TAG, "Updating checksum for app: $packageName to: $checksum")
+                            app.copy(apkCheckSum = checksum)
+                        } else {
+                            app
+                        }
                     }
-                    _appMap.value = newMap
-                    Log.d(TAG, "updateApkChecksum: Обновлена чексумма для приложения: $packageName в карте.")
-                } else {
-                    Log.w(TAG, "updateApkChecksum: Приложение с packageName $packageName исчезло во время обновления чексуммы.")
+                    _appListResult.value = AppRepository.Result.Success(updatedList)
+                    Log.d(TAG, "Updated app list in ViewModel state after checksum calc.")
                 }
-            } else {
-                Log.e(TAG, "updateApkChecksum: Вычисление чексуммы вернуло null для: $packageName")
+            } else if (result is AppRepository.Result.Error) {
+
+                Log.e(TAG, "Failed to calculate checksum for $packageName", result.exception)
+                // Для простоты, не обновляем список, если вычисление не удалось
             }
         }
     }
+
+    fun retryLoadApps() {
+        // Сбрасываем состояние на Loading
+        _appListResult.value = AppRepository.Result.Loading()
+        // И снова запускаем загрузку
+        loadAppMetas()
+    }
+
 }

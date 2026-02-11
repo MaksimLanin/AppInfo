@@ -12,94 +12,77 @@ private const val TAG = "AppRepository"
 
 object AppRepository {
 
-    fun getInstalledAppMetas(context: Context): List<InstalledApp> {
-        Log.d(TAG, "getInstalledAppMetas: Начинаем загрузку списка приложений.")
-        val packageManager = context.packageManager
-        val apps = packageManager.getInstalledApplications(0)
-        val result = apps.mapNotNull { appInfo ->
-            try {
-                val pkgName = appInfo.packageName
-                val pkgInfo = packageManager.getPackageInfo(pkgName, 0)
-                val versionName = pkgInfo.versionName ?: "N/A"
-
-
-                val icon: Drawable? = try {
-                    appInfo.loadIcon(packageManager)
-                } catch (e: PackageManager.NameNotFoundException) {
-
-                    Log.w(TAG, "getInstalledAppMetas: Иконка для $pkgName требует удалённый пакет.", e)
-                    null
-                } catch (e: Exception) {
-                    Log.w(TAG, "getInstalledAppMetas: Не удалось загрузить иконку для $pkgName", e)
-                    null
-                }
-                // ---
-
-                InstalledApp(
-                    appName = packageManager.getApplicationLabel(appInfo).toString(),
-                    packageName = pkgName,
-                    versionName = versionName,
-                    apkCheckSum = null,
-                    icon = icon
-                )
-            } catch (e: PackageManager.NameNotFoundException) {
-                Log.w(TAG, "getInstalledAppMetas: Информация о приложении ${appInfo.packageName} не найдена, пропускаем.", e)
-                null
-            } catch (e: Exception) {
-                Log.e(TAG, "getInstalledAppMetas: Неожиданная ошибка при получении данных для ${appInfo.packageName}", e)
-                null
-            }
-        }
-        Log.d(TAG, "getInstalledAppMetas: Загружено ${result.size} приложений.")
-        return result
+    sealed class Result<T> {
+        data class Success<T>(val data: T) : Result<T>()
+        data class Error<T>(val exception: Exception) : Result<T>()
+        data class Loading<T>(val partialData: T? = null) : Result<T>()
     }
 
+    fun getInstalledAppMetas(context: Context): Result<List<InstalledApp>> {
+        Log.d(TAG, "getInstalledAppMetas called.")
+        return try {
+            val packageManager = context.packageManager
+            val apps = packageManager.getInstalledApplications(0)
+            val result = apps.mapNotNull { appInfo ->
+                try {
+                    val pkgName = appInfo.packageName
+                    val pkgInfo = packageManager.getPackageInfo(pkgName, 0)
+                    val versionName = pkgInfo.versionName ?: "N/A"
+                    val icon = appInfo.loadIcon(packageManager)
+                    InstalledApp(
+                        appName = packageManager.getApplicationLabel(appInfo).toString(),
+                        packageName = pkgName,
+                        versionName = versionName,
+                        apkCheckSum = null,
+                        icon = icon
+                    )
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error getting metadata for app: ${appInfo.packageName}", e)
+                    null
+                }
+            }
+            Log.d(TAG, "getInstalledAppMetas returning ${result.size} apps.")
+            Result.Success(result)
+        } catch (e: Exception) {
+            Log.e(TAG, "Critical error loading app list", e)
+            Result.Error(e)
+        }
+    }
 
-    fun calculateApkChecksum(context: Context, packageName: String): String? {
-        Log.d(TAG, "calculateApkChecksum: Начинаем вычисление чексуммы для $packageName")
+    fun calculateApkChecksum(context: Context, packageName: String): Result<String?> {
+        Log.d(TAG, "calculateApkChecksum called for: $packageName")
         return try {
             val packageManager = context.packageManager
             val pkgInfo = packageManager.getPackageInfo(packageName, 0)
             val apkPath = pkgInfo.applicationInfo?.sourceDir ?: run {
-                Log.w(TAG, "calculateApkChecksum: Путь к APK для $packageName не найден.")
-                return null
+                Log.w(TAG, "sourceDir is null for package: $packageName")
+                return Result.Success(null)
             }
-            Log.d(TAG, "calculateApkChecksum: Путь к APK: $apkPath")
+            Log.d(TAG, "APK path for $packageName: $apkPath")
             val checksum = calculateSHA256(File(apkPath))
-            Log.d(TAG, "calculateApkChecksum: Вычисленная чексумма: $checksum")
-            checksum
-        } catch (e: PackageManager.NameNotFoundException) {
-            Log.e(TAG, "calculateApkChecksum: Информация о приложении $packageName не найдена.", e)
-            null
+            Log.d(TAG, "Calculated checksum for $packageName: $checksum")
+            Result.Success(checksum)
         } catch (e: Exception) {
-            Log.e(TAG, "calculateApkChecksum: Ошибка при вычислении чексуммы для $packageName", e)
-            null
+            Log.e(TAG, "Error calculating checksum for $packageName", e)
+            Result.Error(e)
         }
     }
 
-    private fun calculateSHA256(file: File): String? {
-        Log.d(TAG, "calculateSHA256: Начинаем вычисление SHA-256 для файла: ${file.absolutePath}")
-        return try {
-            val md = MessageDigest.getInstance("SHA-256")
-            var bytesProcessed = 0L
-            file.inputStream().use { fis ->
-                val buffer = ByteArray(8192)
-                var bytesRead: Int
-                while (fis.read(buffer).also { bytesRead = it } != -1) {
-                    md.update(buffer, 0, bytesRead)
-                    bytesProcessed += bytesRead.toLong()
-                }
+    private fun calculateSHA256(file: File): String {
+        Log.d(TAG, "Starting SHA-256 calculation for file: ${file.absolutePath}")
+        val md = MessageDigest.getInstance("SHA-256")
+        var bytesProcessed = 0L
+        file.inputStream().use { fis ->
+            val buffer = ByteArray(8192)
+            var bytesRead: Int
+            while (fis.read(buffer).also { bytesRead = it } != -1) {
+                md.update(buffer, 0, bytesRead)
+                bytesProcessed += bytesRead.toLong()
             }
-            val digest = md.digest()
-            val checksum = digest.joinToString("") { "%02x".format(it) }
-            Log.d(TAG, "calculateSHA256: Чексумма для ${file.name}: $checksum")
-            checksum
-        } catch (e: java.io.IOException) {
-            Log.e(TAG, "calculateSHA256: Ошибка ввода-вывода при чтении файла: ${file.absolutePath}", e)
-            null
-        } catch (e: Exception) {
-            Log.e(TAG, "calculateSHA256: Неожиданная ошибка при вычислении чексуммы для файла: ${file.absolutePath}", e)
-            null
         }
+        val digest = md.digest()
+        val checksum = digest.joinToString("") { "%02x".format(it) }
+        Log.d(TAG, "SHA-256 calculation completed for ${file.name}, checksum: $checksum")
+        return checksum
     }
 }

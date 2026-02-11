@@ -38,12 +38,15 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import coil.compose.AsyncImage
+import com.example.appinfo.data.AppRepository
 import com.example.appinfo.model.InstalledApp
 import com.example.appinfo.viewmodel.AppListViewModel
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.filter
 
 
 private const val TAG = "AppDetailScreen"
+
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -54,38 +57,44 @@ fun AppDetailScreen(
 ) {
     val context = LocalContext.current
     var app by remember { mutableStateOf<InstalledApp?>(null) }
-    var isLoadingChecksum by remember { mutableStateOf(false) } // <-- Состояние загрузки в UI
-    var hasAttemptedCalculation by remember { mutableStateOf(false) }
+    var isLoadingChecksum by remember { mutableStateOf(false) }
+    var checksumCalculationError by remember { mutableStateOf<String?>(null) } // Новое состояние для ошибки чексума
 
     LaunchedEffect(packageName) {
-        Log.d(TAG, "LaunchedEffect: Запущен для packageName: $packageName")
+        Log.d(TAG, "LaunchedEffect started for packageName: $packageName")
 
-        viewModel.appMap.filter { it.containsKey(packageName) }.collect { map ->
-            val updatedApp = map[packageName]
-            if (updatedApp != null) {
-                Log.d(TAG, "AppDetailScreen: Найдено обновлённое приложение: $updatedApp")
-                app = updatedApp
+        // Подписываемся на обновления результата списка приложений
+        viewModel.appListResult.collectLatest { result ->
+            Log.d(TAG, "Received updated app list result: $result, searching for: $packageName")
+            when (result) {
+                is AppRepository.Result.Success -> {
+                    val updatedApp = result.data.find { it.packageName == packageName }
+                    if (updatedApp != null) {
+                        Log.d(TAG, "Found updated app: $updatedApp")
+                        app = updatedApp
 
-                // Проверяем, нужно ли запустить вычисление
-                if (updatedApp.apkCheckSum == null && !hasAttemptedCalculation && !isLoadingChecksum) {
-                    Log.d(TAG, "AppDetailScreen: Чексумма null и не вычислялась, инициируем вычисление для: $packageName")
-                    isLoadingChecksum = true // <-- Устанавливаем флаг загрузки в UI
-                    hasAttemptedCalculation = true
-                    viewModel.updateApkChecksum(packageName)
-                } else if (updatedApp.apkCheckSum != null) {
-                    Log.d(TAG, "AppDetailScreen: Чексумма теперь доступна: ${updatedApp.apkCheckSum}")
-                    isLoadingChecksum = false // <-- Сбрасываем флаг загрузки в UI
-                } else {
-                    Log.d(TAG, "AppDetailScreen: Чексумма всё ещё null, но вычисление было начато или ожидается.")
-                    // isLoadingChecksum остаётся true, пока не придет обновление с результатом
-                    if (updatedApp.apkCheckSum != null) {
-                        isLoadingChecksum = false
+                        // нужно ли запустить вычисление?
+                        if (updatedApp.apkCheckSum == null && !isLoadingChecksum && checksumCalculationError == null) {
+                            Log.d(TAG, "Checksum is null, initiating calculation for: $packageName")
+                            isLoadingChecksum = true
+                            checksumCalculationError = null // cбрасываем ошибку перед новой попыткой
+                            viewModel.updateApkChecksum(packageName)
+                        } else if (updatedApp.apkCheckSum != null) {
+                            Log.d(TAG, "Checksum is now available: ${updatedApp.apkCheckSum}")
+                            isLoadingChecksum = false
+                            checksumCalculationError = null // Успешно вычислено
+                        }
+                    } else {
+                        Log.d(TAG, "Updated app with packageName $packageName not found in list.")
+                        app = null
                     }
                 }
-            } else {
-                Log.d(TAG, "AppDetailScreen: Обновлённое приложение с packageName $packageName не найдено в карте.")
-                if (app != null) {
-                    app = null
+                is AppRepository.Result.Error -> {
+                    Log.e(TAG, "Error in app list result while watching for $packageName", result.exception)
+
+                }
+                is AppRepository.Result.Loading -> {
+
                 }
             }
         }
@@ -130,17 +139,27 @@ fun AppDetailScreen(
                 Text(text = "Версия: ${app.versionName}", style = MaterialTheme.typography.bodyMedium)
                 Text(text = "Пакет: ${app.packageName}", style = MaterialTheme.typography.bodyMedium)
 
-                val checksumText = when {
-                    isLoadingChecksum -> "SHA-256: Calculating..."
-                    app.apkCheckSum != null -> "SHA-256: ${app.apkCheckSum}"
-                    else -> "SHA-256: Not available"
-                }
-                Text(text = checksumText, style = MaterialTheme.typography.bodySmall)
-
+                // отображаем чексумму, статус загрузки или ошибку
                 if (isLoadingChecksum) {
+                    Text(text = "SHA-256: Calculating...", style = MaterialTheme.typography.bodySmall)
                     LinearProgressIndicator(
                         modifier = Modifier.fillMaxWidth()
                     )
+                } else if (checksumCalculationError != null) {
+                    Text(
+                        text = "SHA-256: Error calculating",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                    Text(
+                        text = checksumCalculationError!!,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                } else if (app.apkCheckSum != null) {
+                    Text(text = "SHA-256: ${app.apkCheckSum}", style = MaterialTheme.typography.bodySmall)
+                } else {
+                    Text(text = "SHA-256: Not available", style = MaterialTheme.typography.bodySmall)
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
@@ -164,9 +183,7 @@ private fun launchApp(context: Context, packageName: String) {
         try {
             context.startActivity(launchIntent)
         } catch (e: ActivityNotFoundException) {
-            Log.w(TAG, "launchApp: ActivityNotFoundException при запуске $packageName", e)
+            // не удалось найти активность
         }
-    } else {
-        Log.w(TAG, "launchApp: Launch intent для $packageName равен null.")
     }
 }
