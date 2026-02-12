@@ -42,7 +42,6 @@ import com.example.appinfo.data.AppRepository
 import com.example.appinfo.model.InstalledApp
 import com.example.appinfo.viewmodel.AppListViewModel
 import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.filter
 
 
 private const val TAG = "AppDetailScreen"
@@ -58,12 +57,12 @@ fun AppDetailScreen(
     val context = LocalContext.current
     var app by remember { mutableStateOf<InstalledApp?>(null) }
     var isLoadingChecksum by remember { mutableStateOf(false) }
-    var checksumCalculationError by remember { mutableStateOf<String?>(null) } // Новое состояние для ошибки чексума
+    var checksumCalculationError by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(packageName) {
         Log.d(TAG, "LaunchedEffect started for packageName: $packageName")
 
-        // Подписываемся на обновления результата списка приложений
+
         viewModel.appListResult.collectLatest { result ->
             Log.d(TAG, "Received updated app list result: $result, searching for: $packageName")
             when (result) {
@@ -73,16 +72,16 @@ fun AppDetailScreen(
                         Log.d(TAG, "Found updated app: $updatedApp")
                         app = updatedApp
 
-                        // нужно ли запустить вычисление?
+
                         if (updatedApp.apkCheckSum == null && !isLoadingChecksum && checksumCalculationError == null) {
                             Log.d(TAG, "Checksum is null, initiating calculation for: $packageName")
                             isLoadingChecksum = true
-                            checksumCalculationError = null // cбрасываем ошибку перед новой попыткой
+                            checksumCalculationError = null
                             viewModel.updateApkChecksum(packageName)
                         } else if (updatedApp.apkCheckSum != null) {
                             Log.d(TAG, "Checksum is now available: ${updatedApp.apkCheckSum}")
                             isLoadingChecksum = false
-                            checksumCalculationError = null // Успешно вычислено
+                            checksumCalculationError = null
                         }
                     } else {
                         Log.d(TAG, "Updated app with packageName $packageName not found in list.")

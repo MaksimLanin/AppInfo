@@ -58,15 +58,15 @@ class AppListViewModel(application: Application) : AndroidViewModel(application)
             } else if (result is AppRepository.Result.Error) {
 
                 Log.e(TAG, "Failed to calculate checksum for $packageName", result.exception)
-                // Для простоты, не обновляем список, если вычисление не удалось
+                // для простоты, не обновляем список, если вычисление не удалось
             }
         }
     }
 
     fun retryLoadApps() {
-        // Сбрасываем состояние на Loading
+        // сбрасываем состояние на Loading
         _appListResult.value = AppRepository.Result.Loading()
-        // И снова запускаем загрузку
+        // снова запускаем загрузку
         loadAppMetas()
     }
 

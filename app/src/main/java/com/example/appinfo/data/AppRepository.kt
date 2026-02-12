@@ -1,8 +1,6 @@
 package com.example.appinfo.data
 
 import android.content.Context
-import android.content.pm.PackageManager
-import android.graphics.drawable.Drawable
 import android.util.Log
 import com.example.appinfo.model.InstalledApp
 import java.io.File
